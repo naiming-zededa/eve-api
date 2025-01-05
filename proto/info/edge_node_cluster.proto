@@ -27,6 +27,23 @@ message KubeNodeCondition {
 
   // Condition state
   bool set = 2;
+
+  // last_transition_time is the last time the Condition changed
+  google.protobuf.Timestamp last_transition_time = 3;
+}
+
+// Cluster Admission status of the eve node
+enum NodeAdmission {
+  NODE_ADMISSION_UNSPECIFIED = 0;
+  // Not Clustered is the default state at first boot
+  NODE_ADMISSION_NOT_CLUSTERED = 1;
+  // Leaving can be a long lived state due to draining existing data
+  NODE_ADMISSION_LEAVING = 2;
+  // Joining can be a long lived state if inter-node networking is not operable
+  NODE_ADMISSION_JOINING = 3;
+  // Joined is reached when the node becomes Ready the first time after a request
+  // to join the cluster
+  NODE_ADMISSION_JOINED = 4;
 }
 
 message KubeNodeInfo {
@@ -49,6 +66,12 @@ message KubeNodeInfo {
   string internal_ip = 6;
 
   bool schedulable = 7;
+
+  // Admission State of the local node in a cluster
+  NodeAdmission admission_status = 8;
+
+  // Id of the eve node matching config.EdgeDevConfig.id
+  string node_id = 9;
 }
 
 // StorageHealthStatus is a higher level tracking status to show redundancy/failure-zone level
@@ -102,6 +125,9 @@ enum StorageVolumeReplicaStatus {
   STORAGE_VOLUME_REPLICA_STATUS_REBUILDING = 1;
   STORAGE_VOLUME_REPLICA_STATUS_ONLINE = 2;
   STORAGE_VOLUME_REPLICA_STATUS_FAILED = 3; // Replacement/Rebuilt replica not yet scheduled.
+  STORAGE_VOLUME_REPLICA_STATUS_OFFLINE = 4;
+  STORAGE_VOLUME_REPLICA_STATUS_STARTING = 5;
+  STORAGE_VOLUME_REPLICA_STATUS_STOPPING = 6;
 }
 
 message KubePodNameSpaceInfo {
@@ -181,7 +207,7 @@ message KubeVolumeInfo {
   // Name of the volume
   string name = 1;
 
-  // Status of the volume
+  // Status of the volume attachment
   StorageVolumeState state = 2;
 
   // Robustness of the volume
@@ -201,11 +227,27 @@ message KubeVolumeInfo {
 
   // Replicas of the volume
   repeated KubeVolumeReplicaInfo replica = 8;
+
+  // Robustness substate of the replication status of the volume
+  StorageHealthStatus robustness_substate = 9;
+
+  // Id of the eve volume info.ZInfoVolume.uuid
+  string volume_id = 10;
+}
+
+// ServiceStatus denotes a cluster wide
+//  infrastructure component's health.
+//  eg. a daemonset which requires pods on multiple nodes
+enum ServiceStatus {
+  SERVICE_STATUS_UNSPECIFIED = 0;
+  SERVICE_STATUS_FAILED = 1;
+  SERVICE_STATUS_DEGRADED = 2;
+  SERVICE_STATUS_HEALTHY = 3;
 }
 
 message KubeStorageInfo {
-  // Overall status of Longhorn
-  StorageHealthStatus health = 1;
+  // Health of the distributes storage services
+  ServiceStatus health = 1;
 
   // Time of the most recent health status transition
   google.protobuf.Timestamp transition_time = 2;
@@ -235,4 +277,38 @@ enum KubeComp {
   KUBE_COMP_KUBEVIRT = 4;
   KUBE_COMP_CDI = 5;
   KUBE_COMP_LONGHORN = 6;
+}
+
+// KubeVMIStatus is the VirtualMachineInstancePhase
+// Refer to: https://pkg.go.dev/kubevirt.io/api/core/v1#VirtualMachineInstancePhase
+enum KubeVMIStatus {
+  KUBE_VMI_STATUS_UNSPECIFIED = 0;
+  KUBE_VMI_STATUS_PENDING = 1;
+  KUBE_VMI_STATUS_SCHEDULING = 2;
+  KUBE_VMI_STATUS_SCHEDULED = 3;
+  KUBE_VMI_STATUS_RUNNING = 4;
+  KUBE_VMI_STATUS_SUCCEEDED = 5;
+  KUBE_VMI_STATUS_FAILED = 6;
+  KUBE_VMI_STATUS_UNKNOWN = 7;
+}
+
+// KubeVMIInfo is the VMI status of eve VM apps
+message KubeVMIInfo {
+  // Name of the VirtualMachineInstance
+  string name = 1;
+
+  // Status (VirtualMachineInstance.Status.Phase)
+  KubeVMIStatus status = 2;
+
+  // Creation Time of the VirtualMachineInstance
+  google.protobuf.Timestamp creation_time = 3;
+
+  // LastTransitionTime is the last time is_ready changed
+  google.protobuf.Timestamp last_transition_time = 4;
+
+  // IsReady is true if the VMI has a Ready Condition which is true
+  bool is_ready = 5;
+
+  // NodeName is the current node (kubernetes.io/hostname) the VMI is running on
+  string node_name = 6;
 }
