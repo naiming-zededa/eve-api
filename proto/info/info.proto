@@ -427,6 +427,40 @@ message ZCellularProvider {
   bool forbidden = 5;
 }
 
+// State of a cellular bearer.
+message CellularBearer {
+  // Access Point Network of the bearer.
+  string apn = 1;
+  // Purpose of the bearer.
+  org.lfedge.eve.common.BearerType bearer_type = 2;
+  // The IP addressing type to use for the bearer.
+  org.lfedge.eve.common.CellularIPType ip_type = 3;
+  // Indicates whether or not the bearer is connected.
+  bool connected = 4;
+  // Provides additional information specifying the reason why the modem is not connected
+  // (either due to a failed connection attempt, or due to a a network initiated
+  // disconnection).
+  string connection_error = 5;
+  // Time when the current connection was established.
+  // Zero timestamp if the bearer is not connected.
+  google.protobuf.Timestamp connected_at = 6;
+}
+
+// A cellular profile is a modem-stored configuration that defines how the device
+// connects to a network. It is used mostly during the initial attach procedure.
+message CellularProfile {
+  // The name of the profile.
+  string profile_name = 1;
+  // Access Point Name used by the profile.
+  string apn = 2;
+  // Which bearer type this profile is for.
+  org.lfedge.eve.common.BearerType bearer_type = 3;
+  // The IP addressing type used by the profile.
+  org.lfedge.eve.common.CellularIPType ip_type = 4;
+  // When true, the modem will not connect to networks that require roaming when using this profile.
+  bool forbid_roaming = 5;
+}
+
 // Device Run State
 enum ZDeviceState {
     // Just to handle Un-Initialized runState variable Internally
@@ -469,7 +503,8 @@ enum StorageStatus {
 message StorageDiskState {
   org.lfedge.eve.common.DiskDescription disk_name = 1;
   StorageStatus status = 2;            // In ZFS
-  string state = 3;                   // VDev aux state
+  string state = 3;                    // VDev aux state
+  string smart_status = 4;              // S.M.A.R.T. info availability
 }
 
 enum StorageRaidType {
@@ -495,25 +530,18 @@ message SmartAttr {
   uint64 thresh = 4;  // the value that the Value of the same attribute must reach for the attribute's state to be considered critical.
   string when_failed = 5; // critical state if no empty
   uint64 raw_value = 6; // Contains miscellaneous meter readings (where applicable)
-}
-
-message SmartMetric {
-  SmartAttr reallocated_sector_ct = 1; // Count of reallocated sectors. The higher the attribute value, the more sectors were reallocated
-  SmartAttr power_on_hours = 2; // Count of hours in power-on state.
-  SmartAttr power_cycle_count = 3; // This attribute indicates the count of full hard disk power on/off cycles
-  SmartAttr reallocated_event_count = 4; // Count of remap operations. Shows the total count of attempts.
-  SmartAttr current_pending_sector = 5; // Count of "unstable" sectors (waiting to be remapped, because of unrecoverable read errors)
-  bool need_update = 6; // Indicates that data has changed
-  SmartAttr temperature = 7; // Indicates the device temperature, if the appropriate sensor is fitted.
+  string type = 7; // Informs the condition of the device e.g., pre-fail, old_age, etc.
+  string attribute_name = 8; // the attribute name
 }
 
 message StorageDiskInfo {
+  reserved 3; // deprecated
   string disk_name = 1;
-  repeated SmartMetric smart_data = 3; // smartctl output
   string wwn = 4;
   string serial_number = 5;
   string model = 6; // Intel 123456F
   string collector_errors = 7; // Reports errors when collecting information. Default and normal value = ""
+  repeated SmartAttr smart_attr = 8; // smartctl output
 }
 
 // For nested structures like pool of stripes of mirrors we should define this structure
@@ -682,6 +710,8 @@ enum APICapability {
   API_CAPABILITY_WIN_LIC_PASSTHROUGH = 12; // Support for passing through OEM Windows license from host's the ACPI tables to the VM
   API_CAPABILITY_VOLUME_SNAPSHOTS_IMMEDIATE = 13; // Volume snapshots supported
   API_CAPABILITY_ENCRYPTED_PATCH_ENVELOPE = 14; // Support for Patch Envelope Encryption
+  API_CAPABILITY_SINGLE_STACK_IP_NETWORK = 15; // Support for V4Only and V6Only NetworkType
+  API_CAPABILITY_CELLULAR_ATTACH_CONFIG = 16; // Support cellular attach configuration
   // Add new values as new EdgeDevConfig API features are implemented
 }
 
@@ -846,6 +876,11 @@ message ZCellularStatus {
   // if the connectivity probing is failing, error is reported here
   // (see CellularConnectivityProbe).
   string probe_error = 11;
+  // Contains all bearers currently associated with the cellular connection,
+  // including the attach (initial) bearer.
+  repeated CellularBearer bearers = 12;
+  // Cellular connection profiles stored on the modem.
+  repeated CellularProfile profiles = 13;
 }
 
 // SW Info for the device base OS
