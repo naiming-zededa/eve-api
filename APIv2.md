@@ -129,7 +129,7 @@ The following are the API endpoints that MUST be implemented by a Controller. Al
 
 Register a new Device for the first time.
 
-   POST /api/v2/edgeDevice/register
+   POST /api/v2/edgedevice/register
 
 Return codes:
 
@@ -173,7 +173,7 @@ The response MUST NOT contain any body content.
 
 Check connectivity between Device and Controller.
 
-   GET /api/v2/edgeDevice/ping
+   GET /api/v2/edgedevice/ping
 
 Return codes:
 
@@ -194,7 +194,7 @@ The response MUST NOT contain any body content.
 
 Retrieve configuration for a specific Device.
 
-   POST /api/v2/edgeDevice/id/{uuid}/config
+   POST /api/v2/edgedevice/id/{uuid}/config
 
 Return codes:
 
@@ -233,7 +233,7 @@ The `EdgeDevConfig` message can contain zero, one or more `ConfigItem` entries, 
 
 Retrieve Certificates that Controller will use. Controller can include one or more certificates in the response, and include information about each certificate such as unique identifier for the certificate, the target usage for the certificate and any other properties related to the certificate. Each certificate MUST be a X.509 certificate in PEM format. The device will verify the certificate chains against its trusted root certificate.
 
-   GET /api/v2/edgeDevice/certs
+   GET /api/v2/edgedevice/certs
 
 Return codes:
 
@@ -243,20 +243,21 @@ Return codes:
 
 Request:
 
-The request MUST use HTTP for this request
-
 The request MUST NOT contain any body content
 
 Response:
 
 The response mime type MUST be "application/x-proto-binary".
-The response MUST contain a message with a list of certificates Controller is using. The body MUST be a protobuf message of type [certs.ZControllerCert](./proto/certs/certs.proto).
+The response MUST contain a message with a list of certificates Controller is
+using. The body MUST be a protobuf message of type AuthContainer where the
+AuthBody is a protobuf message of
+type [certs.ZControllerCert](./proto/certs/certs.proto).
 
 ### Attestation
 
 This API anchors all operations related to attestation and trust of a device
 
-POST /api/v2/edgeDevice/id/{uuid}/attest
+POST /api/v2/edgedevice/id/{uuid}/attest
 
 Return codes:
 
@@ -276,7 +277,13 @@ If `reqType` is `ATTEST_REQ_CERT`, `certs` should be filled with certificates us
 
 If `reqType` is `ATTEST_REQ_NONCE`, no other field needs to be set in `ZAttestReq`.
 
-If `reqType` is `ATTEST_REQ_QUOTE`, then `quote` MUST be populated with the following information: `attestData` containing [TPMS_ATTEST structure defined in TCG](https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-2-Structures-01.38.pdf), `signature` containing signature of `TPMS_ATTEST` by the attestation signing key, `pcr_values` containing values of PCR 0-15, `event_log` containing TPM Event Log (aka measurement logs) with each event entry of the format `TpmEventLogEntry`,  `versions` containing current versions of various software components running on the device(e.g. EVE, UEFI etc), `gps_info` containing GPS coordinates of device's geo-location.
+If `reqType` is `ATTEST_REQ_QUOTE`, then `quote` MUST be populated with the
+following information: `attestData` containing
+[TPMS_ATTEST structure defined in TCG](https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-2-Structures-01.38.pdf),
+`signature` containing signature of `TPMS_ATTEST` by the attestation
+signing key, `pcr_values` containing values of PCR 0-15, `versions` containing
+current versions of various software components running on the device (e.g. EVE,
+UEFI etc), `gps_info` containing GPS coordinates of device's geo-location.
 
 If `reqType` is `Z_ATTEST_REQ_TYPE_STORE_KEYS`, then `storage_keys` field must be filled with the following information: `integrity_token` containing integrity_token value given by Controller for the current attestation cycle and `keys` containing keys of type `AttestVolumeKey`, which are the decryption keys used by the device for encryption of its volume(s)
 
@@ -298,7 +305,7 @@ If `respType` is `Z_ATTEST_RESP_TYPE_STORE_KEYS`, then `storage_keys_resp` must 
 
 Send Device status information to Controller
 
-   POST /api/v2/edgeDevice/id/{uuid}/info
+   POST /api/v2/edgedevice/id/{uuid}/info
 
 Return codes:
 
@@ -338,7 +345,7 @@ The response MUST contain no body content.
 
 Send Device and Application metrics to Controller
 
-   POST /api/v2/edgeDevice/id/{uuid}/metrics
+   POST /api/v2/edgedevice/id/{uuid}/metrics
 
 Return codes:
 
@@ -373,7 +380,7 @@ The response MUST contain no body content.
 
 Send Device logs to Controller
 
-   POST /api/v2/edgeDevice/id/{uuid}/logs
+   POST /api/v2/edgedevice/id/{uuid}/logs
 
 Return codes:
 
@@ -408,7 +415,7 @@ The response MUST contain no body content.
 
 Send Application logs to Controller
 
-   POST api/v2/edgeDevice/apps/instanceid/{app-instance-uuid}/logs
+   POST api/v2/edgedevice/apps/instanceid/{app-instance-uuid}/logs
 
 Return codes:
 
@@ -443,7 +450,7 @@ The response MUST contain no body content.
 
 Send Device logs to Controller
 
-   POST /api/v2/edgeDevice/id/{uuid}/newlogs
+   POST /api/v2/edgedevice/id/{uuid}/newlogs
 
 Return codes:
 
@@ -472,7 +479,7 @@ The response MAY contain zero or one message of type [log.ServerMetrics](./go/lo
 
 Send Application logs to Controller
 
-   POST api/v2/edgeDevice/apps/instanceid/{app-instance-uuid}/newlogs
+   POST api/v2/edgedevice/apps/instanceid/{app-instance-uuid}/newlogs
 
 Return codes:
 
@@ -503,7 +510,7 @@ The flowlog API is used by the device to send network flow statistics (TCP and U
 flows with IP addresses, port numbers, counters, whether dropped or accepted),
 and also the hostname to IP address mapping as seen by the device.
 
-   POST /api/v2/edgeDevice/id/{uuid}/flowlog
+   POST /api/v2/edgedevice/id/{uuid}/flowlog
 
 Return codes:
 
@@ -536,7 +543,7 @@ The hardwarehealth API is used by the device to send hardware health
 information about the components of the device (e.g., reporting ECC errors, CPU
 temperature, etc.).
 
-POST /api/v2/edgeDevice/id/{uuid}/hardwarehealth
+POST /api/v2/edgedevice/id/{uuid}/hardwarehealth
 
 Return codes:
 
@@ -575,7 +582,7 @@ The choice of which messages to keep, how long to keep them, which to discard, a
 
 Retrieve uuid for a specific Device.
 
-   POST /api/v2/edgeDevice/uuid
+   POST /api/v2/edgedevice/uuid
 
 Return codes:
 

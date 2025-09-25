@@ -1,0 +1,350 @@
+// Copyright(c) 2025 Zededa, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "evecommon/netcmn.proto";
+
+package org.lfedge.eve.profile;
+
+option go_package  = "github.com/lf-edge/eve-api/go/profile";
+option java_package = "org.lfedge.eve.profile";
+
+// NetworkInfo is sent by EVE in a POST request to the `api/v1/network` endpoint.
+// It publishes multiple configurations for each network port, including:
+//   - The latest configuration received from the controller.
+//   - The fallback configuration used when controller connectivity is lost
+//     or the latest configuration is invalid.
+//   - locally submitted network configuration (from LPS) that overrides
+//     controller or fallback settings for one or more ports.
+//
+// For each port, the `NetworkPortConfig.config_applied` flag indicates which
+// of these configurations is currently active on the device.
+message NetworkInfo {
+  // The most recent network configuration received from the controller.
+  repeated NetworkPortConfig latest_config = 1;
+
+  // Current status of controller connectivity and the state of fallback configuration.
+  NetworkConfigTestingStatus config_testing = 2;
+
+  // True if EVE is currently using a fallback configuration due to controller
+  // connectivity loss.
+  bool is_using_fallback_config = 3;
+
+  // The fallback network configuration currently in use.
+  // Empty if not using fallback configuration.
+  repeated NetworkPortConfig fallback_config = 4;
+
+  // Contains information about locally provided network configuration.
+  // Includes only ports with local configuration and any associated errors.
+  // Errors may result from invalid input from the Local Profile Server (LPS)
+  // or from attempts to configure ports that cannot be modified locally.
+  // Ports not listed here are using either the latest controller config
+  // or the fallback config, as indicated by `NetworkPortConfig.config_applied`.
+  LocalNetworkConfigInfo local_config = 5;
+}
+
+// Reports the current status of controller connectivity testing.
+message NetworkConfigTestingStatus {
+  // True if the device currently has connectivity to the controller.
+  bool controller_reachable = 1;
+
+  // Describes the last connectivity failure; empty if connectivity is fine.
+  string connectivity_error = 2;
+
+  // Timestamp of the most recent (completed) controller connectivity test.
+  google.protobuf.Timestamp last_test_time = 3;
+
+  // Indicates whether connectivity testing is still in progress.
+  // True if the device has not yet completed the test.
+  bool testing_in_progress = 4;
+
+  // Optional human-readable description of the current testing phase or reason
+  // for waiting (e.g., interface not yet available, waiting for DHCP IP,
+  // waiting for DNS configuration). Empty if testing is not in progress.
+  string testing_phase = 5;
+}
+
+// LocalNetworkConfigInfo reports the current state of locally provided
+// network configuration. It lists all ports configured locally,
+// and any errors from processing the local configuration
+message LocalNetworkConfigInfo {
+  // List of ports with locally provided network configuration.
+  repeated NetworkPortConfig ports = 1;
+
+  // Error related to the processing of the local configuration as a whole.
+  // Indicates problems that prevented EVE from accepting or processing the request
+  // (e.g., invalid token, malformed payload, or missing logical labels).
+  // Unlike per-port errors (reported in NetworkPortConfig.error_message),
+  // this error is not tied to a specific port. Empty if the local configuration
+  // was accepted without errors.
+  string error_message = 2;
+}
+
+// LocalNetworkConfig is optionally returned by the Local Profile Server in response
+// to a POST request to the `api/v1/network` endpoint.
+// If the server responds with HTTP 204 (no content), EVE will continue using the
+// most recently submitted local configuration without changes.
+message LocalNetworkConfig {
+  // Security token. EVE verifies that `server_token` matches the profile server
+  // token provisioned via the controller.
+  string server_token = 1;
+
+  // Declarative network configuration for ports managed locally.
+  // Contains all ports with locally defined configuration, regardless of whether
+  // they were newly configured, updated, or remain unchanged since the last submission.
+  // Ports not listed here are expected to use the controller-provided (or fallback)
+  // configuration.
+  repeated NetworkPortConfig ports = 2;
+}
+
+// Specifies the IP version(s) enabled on a network port.
+enum IPVersion {
+  // IP version is not specified.
+  // But default, port operates in dual-stack mode.
+  IP_VERSION_UNSPECIFIED = 0;
+  // Port operates in dual-stack mode, supporting both IPv4 and IPv6 simultaneously.
+  IP_VERSION_DUAL_STACK = 1;
+  // Port operates with IPv4 only.
+  IP_VERSION_IPV4_ONLY  = 2;
+  // Port operates with IPv6 only.
+  IP_VERSION_IPV6_ONLY  = 3;
+}
+
+// Specifies system and hardware identifiers for a network port.
+// These fields are included in NetworkInfo to help the user identify the port,
+// but may be omitted in LocalNetworkConfig. None of these identifiers
+// (including the interface name) can be changed.
+// For identification in LocalNetworkConfig, use the port's logical label instead.
+message NetworkPortAddresses {
+  // The interface name assigned by the Linux kernel.
+  string interface_name = 1;
+  // PCI address of the network adapter in the long format.
+  // For example: `0000:00:15.0`
+  string pci_address = 2;
+  // USB address of the network adapter in the format `<BUS>:[<PORT>]`, with nested ports
+  // separated by dots. For example: `1:2.3`
+  // Empty if the network adapter is not a USB device.
+  string usb_address = 3;
+}
+
+// NetworkPortConfig defines the configuration settings for a network port on a device.
+// It includes identification fields, IP addressing details, routing information,
+// DNS and NTP servers, MTU settings, and optional proxy and wireless adapter configurations.
+//
+// This message supports both static and DHCP-based IP configurations.
+// When DHCP is enabled (`use_dhcp` = true), static IP fields can still be specified.
+// By default, static configurations are merged with DHCP-provided settings,
+// but the user can control, for each IP-related field, whether static config
+// should override DHCP values or be merged alongside them.
+//
+// For cellular modems, IP settings are always provided by the cellular network,
+// so user-specified IP configurations are ignored during cellular modem updates.
+message NetworkPortConfig {
+  // Logical label of the port as defined in the device model.
+  // This identifier is used to reference the port across configurations
+  // and status reports.
+  string logical_label = 1;
+
+  // System and hardware identifiers of the network port (informational only).
+  // When included in `LocalNetworkConfig.ports` received from LPS,
+  // this field is ignored by EVE. Port identification must be done exclusively
+  // using the logical label.
+  NetworkPortAddresses port_addresses = 2;
+
+  // Indicates whether this configuration is currently applied to the port.
+  // If false, the port is using a different configuration (latest controller config,
+  // local config, or fallback) instead of this one.
+  // Inside `LocalNetworkConfig.ports`, received by EVE from LPS, this field is ignored.
+  bool config_applied = 3;
+
+  // IP version(s) enabled for the port.
+  IPVersion ip_version = 4;
+
+  // Enables DHCP for IP configuration.
+  // When enabled, static IP configurations can still be provided.
+  // By default, static settings are merged with DHCP-provided configuration,
+  // but merging behavior can be controlled per IP-related field.
+  bool use_dhcp = 5;
+
+  // Specifies which DHCP options should be ignored when merging static and DHCP
+  // configurations.
+  org.lfedge.eve.common.DhcpOptionsIgnore dhcp_options_ignore = 6;
+
+  // Static IP addresses, in CIDR format (e.g., "192.168.1.10/24").
+  repeated string ip_addresses = 7;
+
+  // Statically configured gateway IP addresses.
+  // Use the `without_default_route` option to specify whether these gateways
+  // should NOT be used as default routes.
+  // When `without_default_route` is true, no default route will be added
+  // for this adapter, regardless of the gateway list or DHCP settings.
+  repeated string gateways = 8;
+
+  // When set to true, the network adapter will be configured without any default route.
+  // This overrides gateway settings and applies even if DHCP is enabled (`use_dhcp = true`).
+  bool without_default_route = 9;
+
+  // Statically configured DNS server IP addresses.
+  repeated string dns_servers = 10;
+
+  // Statically configured local DNS domain suffix.
+  string dns_domain = 11;
+
+  // Statically configured NTP server addresses (IP or hostname).
+  repeated string ntp_servers = 12;
+
+  // MTU (Maximum Transmission Unit) in bytes.
+  // The max allowed value is 65535 (protobuf does not define uint16).
+  // If not defined (zero value), EVE will set the default MTU size, which depends
+  // on the network adapter type. Ethernet and WiFi adapters default to 1500 bytes,
+  // while cellular modems typically receive their MTU value from the network provider
+  // (which EVE will use unless user overrides the MTU value).
+  uint32 mtu = 13;
+
+  // Proxy configuration.
+  org.lfedge.eve.common.ProxyConfig proxy_config = 14;
+
+  // Specifies the type of wireless device.
+  // Should correspond to which oneof field is set in `wireless_config`.
+  WirelessType wireless_device_type = 15;
+
+  // Configuration for a wireless adapter (WiFi or cellular modem).
+  // For cellular modems, IP-related fields such as addresses, DNS, gateways, etc.
+  // must not be specified, because they are always obtained dynamically from the
+  // cellular network. Any user-specified values will be ignored by EVE.
+  oneof wireless_config {
+    // Configuration details specific to a cellular modem.
+    CellularConfig cellular_config = 16;
+
+    // Configuration details specific to a WiFi adapter.
+    WifiConfig wifi_config = 17;
+  }
+
+  // Identifies the source of this network port configuration.
+  // Inside `LocalNetworkConfig.ports`, received by EVE from LPS, this field is ignored.
+  org.lfedge.eve.common.PortConfigSource config_source = 18;
+
+  // Error message associated with this specific port configuration.
+  // Indicates problems with the configuration itself (invalid values or disallowed settings)
+  // or with the port's current state (e.g., missing IP/DNS on the management port,
+  // link down, or other connectivity issues).
+  // Empty if the configuration for this port was accepted and fully operational.
+  // Even if an error is reported, the configuration might still be (at least partially)
+  // applied; use the `config_applied` field to determine whether the port is currently
+  // using the requested configuration despite any issues.
+  // Inside `LocalNetworkConfig.ports`, received by EVE from LPS, this field is ignored.
+  string error_message = 19;
+}
+
+// Enum representing the type of wireless device associated with the network port.
+enum WirelessType {
+  // Indicates that the device is not a wireless device.
+  WIRELESS_TYPE_UNSPECIFIED = 0;
+
+  // Indicates that the device is a cellular modem.
+  WIRELESS_TYPE_CELLULAR = 1;
+
+  // Indicates that the device is a WiFi adapter.
+  WIRELESS_TYPE_WIFI = 2;
+}
+
+// Configuration details specific to a cellular modem.
+message CellularConfig {
+  // Access Point Name (APN) for the default bearer. Defaults to "internet".
+  string apn = 1;
+
+  // APN used for the attach (initial) bearer.
+  // Optional. If omitted, EVE will skip submitting attach bearer configuration
+  // to the modem, allowing the modem to fall back to its internal/default profiles.
+  string attach_apn = 2;
+
+  // IP address type for the default bearer.
+  org.lfedge.eve.common.CellularIPType ip_type = 3;
+
+  // IP address type for the attach bearer. Ignored if attach_apn is not set.
+  org.lfedge.eve.common.CellularIPType attach_ip_type = 4;
+
+  // SIM card slot to activate (single-standby only).
+  // 0 = unspecified (keep the current);
+  // 1 = activate the first SIM slot;
+  // 2 = activate the second SIM slot;
+  // etc.
+  uint32 activate_sim_slot = 5;
+
+  // If true, then modem will avoid connecting to networks with roaming.
+  bool forbid_roaming = 6;
+
+  // Authentication settings for the default bearer.
+  CellularNetworkAuth default_bearer_auth = 7;
+
+  // Authentication settings for the attach bearer.
+  CellularNetworkAuth attach_bearer_auth = 8;
+
+  // Optional cellular connectivity probing.
+  // By default it is enabled.
+  CellularConnectivityProbe probe = 9;
+
+  // Some LTE modems have GNSS receiver integrated and can be used for device
+  // location tracking.
+  // Enable this option to have location info periodically obtained from this
+  // modem and published to controller and to applications.
+  bool location_tracking = 10;
+}
+
+// CellularNetworkAuth defines the authentication credentials and protocol
+// used to connect to a cellular network. It includes sensitive information
+// such as username and password, which are not published to LPS in status reports
+// but can be configured by LPS via network configuration updates.
+message CellularNetworkAuth {
+  // Authentication protocol used for cellular network access.
+  org.lfedge.eve.common.CellularAuthProtocol auth_protocol = 1;
+
+  // Username is not published in NetworkInfo but may be set in LocalNetworkConfig.
+  string username = 2;
+
+  // Password is not published in NetworkInfo but may be set in LocalNetworkConfig.
+  string password = 3;
+}
+
+// CellularConnectivityProbe is used to periodically check the connectivity status
+// of a cellular network by probing a remote endpoint.
+// Whenever the probe fails, the cellular connection is automatically restarted.
+message CellularConnectivityProbe {
+  // If true, then probing is disabled.
+  bool disable = 1;
+  // User-defined probe for cellular connectivity testing.
+  // Only IP address is allowed as ConnectivityProbe.probe_address (and port if needed),
+  // not hostname.
+  // The probing algorithm is more complex that just testing reachability of a remote
+  // endpoint and the goal is to minimize generated traffic, probing time and false negatives
+  // (that would trigger undesired re-connect).
+  // EVE will periodically check the modem status, accessibility of DNS server(s) and potentially
+  // also proxies in the local network, and only as the last resort (if connectivity state
+  // is still unclear) it will probe the remote endpoint. If custom_probe is not defined,
+  // EVE will try to ping "8.8.8.8" (Google public DNS).
+  // It is recommended to use custom probe for private LTE networks where public DNS servers
+  // might not be allowed by the firewall (and hence ping would fail even with a working
+  // connectivity).
+  org.lfedge.eve.common.ConnectivityProbe custom_probe = 3;
+}
+
+// Configuration details specific to a WiFi adapter.
+message WifiConfig {
+  // SSID (network name) of the WiFi network.
+  string ssid = 1;
+
+  // Key management scheme (e.g., WPA-PSK, WPA-EAP).
+  org.lfedge.eve.common.WiFiKeyScheme key_scheme = 2;
+
+  // Identity/username for WPA2 Enterprise networks.
+  // Not included in NetworkInfo, but can be updated via LocalNetworkConfig.
+  string identity = 3;
+
+  // WiFi password or pre-shared key (PSK).
+  // This value should be the hashed PSK generated by the `wpa_passphrase` tool.
+  // For security, it is excluded from NetworkInfo but can be updated through
+  // LocalNetworkConfig.
+  string password = 4;
+}

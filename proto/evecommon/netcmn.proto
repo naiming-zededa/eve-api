@@ -1,0 +1,307 @@
+// Copyright(c) 2017-2018 Zededa, Inc.
+// All rights reserved.
+
+syntax = "proto3";
+
+package org.lfedge.eve.common;
+
+option go_package  = "github.com/lf-edge/eve-api/go/evecommon";
+option java_package = "org.lfedge.eve.common";
+option java_multiple_files = true;
+option java_outer_classname = "Evecommon";
+
+import "google/protobuf/timestamp.proto";
+
+message ipRange {
+  string start = 1;
+  string end = 2;
+}
+
+enum proxyProto {
+  PROXY_HTTP    = 0;
+  PROXY_HTTPS   = 1;
+  PROXY_SOCKS   = 2;
+  PROXY_FTP     = 3;
+  PROXY_OTHER   = 255;
+}
+
+message ProxyServer {
+  proxyProto proto  = 1;
+  string     server = 2;
+  uint32     port   = 3;
+}
+
+message ProxyConfig {
+  // enable network level proxy in the form of WPAD
+  bool networkProxyEnable = 1;
+
+  // dedicated per protocol information
+  repeated ProxyServer proxies = 2;
+
+  // exceptions separated by commas
+  string exceptions = 3;
+
+  // or pacfile can be in place of others
+  // base64 encoded
+  string pacfile = 4;
+
+  // Direct URL for wpad.dat download
+  string networkProxyURL = 5;
+
+  // Uploaded proxy certificate or certificate chain for MITM
+  // this may be needed either in explicit (has ProxyServer items), automatic
+  // (networkProxyEnable) or transparent (network layer not aware of proxy)
+  repeated bytes proxyCertPEM = 6;
+}
+
+// These are list of static mapping that can be added to network
+message ZnetStaticDNSEntry {
+  string HostName   = 1;
+  repeated string Address = 2;
+}
+
+enum DHCPType {
+  DHCPNoop = 0;
+  // Statically configure the DHCP for port
+  Static = 1;
+
+  // Don't run any DHCP, we are in passthrough mode for app
+  DHCPNone = 2;
+
+  // deprecated = 3;
+
+  // Run the DHCP client on this port
+  Client = 4;
+}
+
+// Common for IPv4 and IPv6
+message ipspec {
+  DHCPType   dhcp = 2;
+
+  // subnet is CIDR format...x.y.z.l/nn
+  string subnet = 3;
+  string gateway = 5;
+  string domain = 6;
+  // ntp and more_ntp are used as a union to specify several NTP servers
+  // via IP address or FQDN
+  // this is for historical reasons when we only allowed to specify one
+  // NTP server
+  string ntp = 7;
+  repeated string more_ntp = 10;
+  repeated string dns = 8;
+
+  // for IPAM management when dhcp is turned on.
+  // If none provided, system will default pool.
+  ipRange dhcpRange = 9;
+
+  // Even if DhcpType is Client, EVE still accepts static
+  // IP config and will merge it with the DHCP-provided one by default
+  // use the following option to override this behavior
+  DhcpOptionsIgnore dhcp_options_ignore = 11;
+}
+
+// DhcpOptionsIgnore specifies which DHCP-provided options
+// should be ignored by the device, allowing static configuration
+// to override DHCP where applicable.
+//
+// Currently supported options include:
+//   - IP addresses
+//   - NTP servers
+//   - DNS servers and domains
+//   - Router (gateway) addresses
+//
+// This allows flexible merging or exclusive use of static config fields.
+//
+// For full DHCP option references:
+//   - DHCP: https://www.iana.org/assignments/bootp-dhcp-parameters/bootp-dhcp-parameters.xhtml
+//   - DHCPv6: https://www.iana.org/assignments/dhcpv6-parameters/dhcpv6-parameters.xhtml
+message DhcpOptionsIgnore {
+  // When true, statically configured NTP servers are used exclusively,
+  // ignoring any NTP servers provided by DHCP.
+  // If true and no static NTP servers are set, no NTP servers will be used.
+  // For DHCP (IPv4), this applies to option 42.
+  // For DHCPv6 (IPv6), this applies to option 56.
+  bool ntp_server_exclusively = 1;
+
+  // When true, statically configured IP addresses are used exclusively,
+  // ignoring any IP addresses provided by DHCP.
+  // If true and no static IP addresses are set, the interface will have no IP assigned.
+  bool ip_addresses_exclusively = 2;
+
+  // When true, statically configured DNS servers and domain name(s) are used
+  // exclusively, ignoring any DNS-related configuration provided by DHCP.
+  // If true and no static DNS servers are set, no DNS servers will be used.
+  // Similarly, if no static domain name(s) are set, no domain name(s) will be used.
+  // For DHCP (IPv4), this applies to option 6 (DNS servers), option 15
+  // (single domain name), and option 119 (search domains).
+  // For DHCPv6 (IPv6), this applies to option 23 (DNS servers) and option 24
+  // (domain search list).
+  bool dns_config_exclusively = 3;
+
+  // When true, statically configured gateway addresses are used exclusively,
+  // ignoring any routers provided by DHCP.
+  // If true and no static routers are set, no gateway will be used.
+  // For DHCP (IPv4), this applies to option 3.
+  // For DHCPv6 (IPv6), this applies to option 24.
+  bool gateways_exclusively = 4;
+}
+
+enum NetworkType {
+  NETWORKTYPENOOP = 0;
+  V4 = 4; // Legacy - interpreted same as Dual stack
+  V6 = 6; // Legacy - interpreted same as Dual stack
+  CryptoV4 = 24;
+  CryptoV6 = 26;
+  CryptoEID = 14;
+  V4Only = 7;
+  V6Only = 8;
+  DualV4V6 = 9;
+}
+
+enum WirelessType {
+  TypeNOOP = 0;
+  WiFi = 1;
+  Cellular = 2;
+}
+
+enum WiFiKeyScheme {
+  SchemeNOOP = 0;
+  WPAPSK = 1;        // WPA-PSK
+  WPAEAP = 2;        // WPA-EAP or WPA2 Enterprise
+}
+
+// User-defined method to use to determine the connectivity status.
+enum ConnectivityProbeMethod {
+  // Connectivity probing method is not specified and therefore will not be used.
+  CONNECTIVITY_PROBE_METHOD_UNSPECIFIED = 0;
+  // Use ICMP ping against the probed endpoint to determine the connectivity status.
+  CONNECTIVITY_PROBE_METHOD_ICMP = 1;
+  // Try to establish TCP connection with the probed endpoint to determine the connectivity
+  // status.
+  CONNECTIVITY_PROBE_METHOD_TCP = 2;
+  // TODO: Consider adding support for BFD probing.
+}
+
+// Address of a remote endpoint to probe in order to determine connectivity status.
+message ProbeEndpoint {
+  // IP address or FQDN.
+  string host = 1;
+  // TCP port required for CONNECTIVITY_PROBE_METHOD_TCP.
+  // Leave empty for CONNECTIVITY_PROBE_METHOD_ICMP.
+  uint32 port = 2;
+}
+
+// Configuration for user-defined connectivity-testing probe.
+message ConnectivityProbe {
+  // Method to use to determine the connectivity status.
+  ConnectivityProbeMethod probe_method = 1;
+  // Endpoint to probe using the selected probing mechanism to determine
+  // the connectivity status.
+  ProbeEndpoint probe_endpoint = 2;
+}
+
+enum RadioAccessTechnology {
+  RADIO_ACCESS_TECHNOLOGY_UNSPECIFIED = 0;
+  // Global System for Mobile Communications (2G).
+  RADIO_ACCESS_TECHNOLOGY_GSM = 1;
+  // Universal Mobile Telecommunications System (3G).
+  RADIO_ACCESS_TECHNOLOGY_UMTS = 2;
+  // Long Term Evolution (4G).
+  RADIO_ACCESS_TECHNOLOGY_LTE = 3;
+  // 5G New Radio.
+  RADIO_ACCESS_TECHNOLOGY_5GNR = 4;
+}
+
+// The IP addressing type to use for a given attach or default bearer.
+enum CellularIPType {
+  // IP type is not specified.
+  // When unspecified, EVE will not enforce an IP type in the bearer configuration.
+  // The modem will instead use its built-in profiles (see CellularProfile) to determine
+  // the appropriate IP type for the network.
+  CELLULAR_IP_TYPE_UNSPECIFIED = 0;
+  // IPv4 only.
+  CELLULAR_IP_TYPE_IPV4 = 1;
+  // IPv4 and IPv6.
+  CELLULAR_IP_TYPE_IPV4_AND_IPV6 = 2;
+  // IPv6 only.
+  CELLULAR_IP_TYPE_IPV6 = 3;
+}
+
+// Purpose of a given cellular bearer.
+enum BearerType {
+  // Bearer type is not specified.
+  BEARER_TYPE_UNSPECIFIED = 0;
+  // Bearer used for the initial attach procedure.
+  BEARER_TYPE_ATTACH = 1;
+  // Default connection bearer providing packet data access to the network.
+  BEARER_TYPE_DEFAULT = 2;
+  // Secondary context (2G/3G) or dedicated bearer (4G), defined by the user
+  // of the API. These bearers use the same IP address used by a primary
+  // context or default bearer and provide a dedicated flow for specific
+  // traffic with different QoS settings.
+  BEARER_TYPE_DEDICATED = 3;
+}
+
+// CellularAuthProtocol defines the authentication protocol used for cellular connection.
+enum CellularAuthProtocol {
+  // No authentication.
+  CELLULAR_AUTH_PROTOCOL_NONE = 0;
+  // Password Authentication Protocol.
+  CELLULAR_AUTH_PROTOCOL_PAP = 1;
+  // Challenge-Handshake Authentication Protocol.
+  CELLULAR_AUTH_PROTOCOL_CHAP = 2;
+  // Both PAP and CHAP.
+  CELLULAR_AUTH_PROTOCOL_PAP_AND_CHAP = 3;
+}
+
+// NetworkConfigOrigin enumerates all possible origins of a network port configuration.
+enum NetworkConfigOrigin {
+  // Unknown or unset origin.
+  NETWORK_CONFIG_ORIGIN_UNSPECIFIED = 0;
+  // Config received from the controller.
+  NETWORK_CONFIG_ORIGIN_CONTROLLER = 1;
+  // Initial device config embedded in the EVE installer, signed by the controller.
+  NETWORK_CONFIG_ORIGIN_BOOTSTRAP = 2;
+  // Manually created JSON config injected into the installer.
+  NETWORK_CONFIG_ORIGIN_OVERRIDE = 3;
+  // Fallback configuration automatically generated to enable DHCP on all Ethernet ports.
+  // Used when no network config is available or when "network.fallback.any.eth" is enabled
+  // and none of the existing configs provide controller connectivity.
+  NETWORK_CONFIG_ORIGIN_LASTRESORT = 4;
+  // Config entered via the terminal UI (TUI).
+  NETWORK_CONFIG_ORIGIN_TUI = 5;
+  // Configuration signed by the controller and delivered through the
+  // Local Operator Console (LOC) in an air-gapped environment.
+  NETWORK_CONFIG_ORIGIN_LOC = 6;
+  // Config changes made locally through the Local Profile Server (LPS).
+  NETWORK_CONFIG_ORIGIN_LPS = 7;
+}
+
+// PortConfigSource describes the origin of the configuration used for a network port.
+// It helps distinguish between controller-provided, locally-modified, or initial configs.
+message PortConfigSource {
+  // Indicates where EVE obtained the network config.
+  org.lfedge.eve.common.NetworkConfigOrigin origin = 1;
+
+  // Timestamp when this port’s configuration was originally submitted
+  // or created at its source.
+  //
+  // Meaning depends on the origin:
+  // - Controller, LOC, bootstrap: timestamp provided by the controller.
+  // - Local override.json: when the file was first loaded by EVE.
+  // - Last-resort: when EVE generated the fallback config.
+  // - LPS modifications: when the modified config was received.
+  // - TUI: when the user submitted the configuration.
+  //
+  // This is different from DevicePortStatus.timePriority, which is used
+  // to compare and prioritize different sources of network configuration
+  // (and may be synthetic for some sources, e.g. year 2000 for override.json,
+  // epoch 0 for last-resort). By contrast, submitted_at represents when this
+  // port’s configuration first came into existence, regardless of when or whether
+  // the device applied it.
+  //
+  // Note: this is a per-port timestamp. The underlying network config may
+  // cover multiple ports, but only the portion relevant to this port is
+  // reflected here.
+  google.protobuf.Timestamp submitted_at = 2;
+}
