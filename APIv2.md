@@ -56,7 +56,7 @@ In general, there is one directory for each API endpoint:
 * `logs`: The LogBundle message sent from Device to Controller containing internal device logs.
 * `apps/instanceid/{app-instance-uuid}/logs`: The LogBundle message sent from Device to Controller containing application console device logs.
 * `certs`: The ZControllerCert message is sent from Controller to Device, and contains the list of certificates used by Controller. Each ZControllerCert message replaces the current list on the device with the new list of certificates. Therefore, if an empty list is sent, it resets the list on the receiving side.
-* `uuid`: This API is used by the device to fetch its unique idenitifier allocated by the Controller. Along with the uuid, the reply for this request will also contain manufacturer and product model of the device.
+* `uuid`: This API is used by the device to fetch its unique identifier allocated by the Controller. Along with the uuid, the reply for this request will also contain manufacturer and product model of the device.
 * `attest`: This API anchors all trust and attestation operations from the device. At the top level, the device does a POST of `ZAttestReq` and gets `ZAttestResp` as the response from Controller.
 
 The above endpoints are a common API between the EVE device and main Controller. There is also a special endpoint that is only for the side Controller, also known as Local Operator Console (LOC):
@@ -283,7 +283,10 @@ following information: `attestData` containing
 `signature` containing signature of `TPMS_ATTEST` by the attestation
 signing key, `pcr_values` containing values of PCR 0-15, `versions` containing
 current versions of various software components running on the device (e.g. EVE,
-UEFI etc), `gps_info` containing GPS coordinates of device's geo-location.
+UEFI etc), `gps_info` containing GPS coordinates of device's geo-location,
+`tpm_binary_event_log` containing standard gzip-compressed TPM binary event
+log as describe in
+[TCG Crypto agile log format](https://trustedcomputinggroup.org/wp-content/uploads/TCG-PC-Client-Platform-Firmware-Profile-Version-1.06-Revision-52_pub-3.pdf).
 
 If `reqType` is `Z_ATTEST_REQ_TYPE_STORE_KEYS`, then `storage_keys` field must be filled with the following information: `integrity_token` containing integrity_token value given by Controller for the current attestation cycle and `keys` containing keys of type `AttestVolumeKey`, which are the decryption keys used by the device for encryption of its volume(s)
 
@@ -334,6 +337,7 @@ The request body MUST indicate the type of information it is sending, and the co
 * List of blobs via `ZInfoBlobList`: information about the blobs (aka layers) which make up the nodes in a content tree.
 * List of tasks via `ZInfoDeviceTasks`: information about the containerd tasks present on the device.
 * App instance metadata via `ZInfoAppInstMetaData`: information about the app instance meta data like kubeconfig, etc. Max size of data is less than equal to 32KB.
+* Overview of the devices hardware via `ZInfoHardware`: information about the device hardware like CPU, Memory, Storage, etc.
 
 An information message is expected to be reliable. A Device MUST retry until it successfully delivers information messages. How often information messages are sent, retries and other caching mechanisms on the Device are NOT specified here, as they are implementation questions.
 
@@ -541,7 +545,7 @@ The response MUST contain no body content.
 
 The hardwarehealth API is used by the device to send hardware health
 information about the components of the device (e.g., reporting ECC errors, CPU
-temperature, etc.).
+temperature, S.M.A.R.T. metrics etc.).
 
 POST /api/v2/edgedevice/id/{uuid}/hardwarehealth
 
@@ -601,6 +605,83 @@ Response:
 
 The response mime type MUST be "application/x-proto-binary".
 The response MUST contain a single protobuf message of type AuthContainer where the AuthBody is a protobuf message of type [uuid.UuidResponse](./proto/uuid/uuid.proto). It must include UUID of the device, along with other fields such as device's registered name, Manufacturer, Model, Enterprise.
+
+### SCEP Proxy
+
+The SCEP Proxy API allows an Edge Device to perform SCEP (Simple Certificate Enrollment Protocol)
+operations through the Controller when the SCEP server is not directly reachable from
+the device’s current network (e.g., onboarding or unauthenticated VLAN).
+
+The Controller acts strictly as a transport-level HTTPS proxy.
+It does not decrypt, inspect, or modify SCEP PKI messages.
+
+#### Endpoint
+
+POST /api/v2/edgedevice/id/{uuid}/proxy/scep
+
+Return codes:
+
+* Success: 200
+* Unauthenticated or invalid credentials: `401`
+* Valid credentials without authorization: `403`
+* Unknown Device: `400`
+* Invalid or unauthorized SCEP server profile: `403`
+* Missing or unprocessable body: `422`
+* Controller is unavailable (e.g., upgrade in progress): `503`
+
+#### Request
+
+* The request MUST use the Device certificate to sign the `protectedPayload` in the `AuthContainer`.
+* The `senderCerthash` MUST be set to the hash of the Device certificate.
+* The request MUST be of mime type `application/x-proto-binary`.
+* The request body MUST be a protobuf message of type `AuthContainer` where the `AuthBody`
+  is a protobuf message of type [proxy.SCEPProxyRequest](./proto/proxy/scep.proto),
+  wrapping the PKI request message and the SCEP request attributes.
+
+#### Processing rules
+
+* The SCEP PKI message MUST be constructed entirely by the Edge Device.
+* The Device MUST sign the PKI request using the private key generated for SCEP enrollment.
+* The Device MUST encrypt the PKI request using the CA certificate (or challenge password,
+  if applicable), per SCEP requirements.
+* The Controller MUST NOT unwrap, decrypt, inspect, or modify the PKCS#7 payload.
+* The Controller MUST verify that the referenced SCEP profile exists and is enabled
+  for use by the requesting Edge Device.
+* Requests referencing unauthorized or unknown SCEP profiles MUST be rejected.
+
+#### Response
+
+* The response mime type MUST be `application/x-proto-binary`.
+* The response MUST contain a single protobuf message of type `AuthContainer` where
+  the `AuthBody` is a protobuf message of type [proxy.SCEPProxyResponse](./proto/proxy/scep.proto),
+  wrapping the PKI response message and the SCEP response attributes.
+
+#### Post-processing on the Edge Device
+
+Upon receiving a successful response:
+
+* the Device MUST verify the Controller’s signature on the AuthContainer.
+* The Device MUST unwrap the SCEP response.
+* For PKI_MESSAGE responses:
+  * The response payload MUST be decrypted using the Device’s SCEP private key.
+  * The SCEP CA signature on the response MUST be validated against the trusted CA
+    certificate chain configured in the SCEP profile (i.e., `SCEPProfile.ca_cert_pem`),
+  * The Device MUST handle both:
+    * Issued certificate responses
+    * PENDING responses, retrying enrollment as specified by SCEP
+* The enrolled certificate MUST be stored and reported via device certificate info APIs.
+
+#### Security Properties
+
+* The Device private key used for SCEP enrollment never leaves the Edge Device.
+  If a TPM is available, the private key is generated inside the TPM and remains
+  protected within it.
+* All SCEP cryptographic operations (signing and decryption) are performed locally
+  on the Device.
+* The Controller provides device authentication, SCEP profile authorization, and transport
+  proxying only.
+* End-to-end SCEP message confidentiality and integrity are preserved between the Device
+  and the SCEP server.
 
 ## HTTP MetaData
 

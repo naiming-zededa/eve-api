@@ -14,6 +14,31 @@ import "evecommon/netcmn.proto";
 import "info/patch_envelope.proto";
 import "info/ntpsources.proto";
 import "info/edge_node_cluster.proto";
+import "info/hardware.proto";
+import "info/pnac.proto";
+import "info/cert.proto";
+import "info/common.proto";
+
+message SmartAttr {
+  uint32 id = 1;
+  uint64 value = 2;   // the current value of the parameter
+  uint64 worst = 3;   // worst value that Value has ever reached
+  uint64 thresh = 4;  // the value that the Value of the same attribute must reach for the attribute's state to be considered critical.
+  string when_failed = 5; // critical state if no empty
+  uint64 raw_value = 6; // Contains miscellaneous meter readings (where applicable)
+  string type = 7; // Informs the condition of the device e.g., pre-fail, old_age, etc.
+  string attribute_name = 8; // the attribute name
+}
+
+message StorageDiskInfo {
+  reserved 3; // deprecated
+  string disk_name = 1;
+  string wwn = 4;
+  string serial_number = 5;
+  string model = 6; // Intel 123456F
+  string collector_errors = 7; // Reports errors when collecting information. Default and normal value = ""
+  repeated SmartAttr smart_attr = 8; // smartctl output
+}
 
 // Deprecated: see deprecatedMetricItem below
 enum DepMetricItemType {
@@ -235,58 +260,6 @@ message ZInfoSW {
   string vdev = 7;              // E.g., "xvda"
   uint32 downloadProgress = 8;  // Download progress; 0-100 percent
   string imageName = 9;         // Name of the disk image
-}
-
-// Errors in response to the application of configuration
-message ErrorInfo {
-  string description = 1;
-  google.protobuf.Timestamp timestamp = 2;  // Timestamp at which error had occurred
-  Severity severity = 3;                    // Severity of the error
-  repeated DeviceEntity entities = 4;       // objects referenced by the description or retry_condition
-  string retry_condition = 5;               // condition to retry
-}
-
-// DeviceEntity contains the device entity details
-message DeviceEntity {
-  Entity entity = 1;           // entity type
-  string entity_id = 2;        // entity uuid
-  string entity_name = 3;      // entity name
-}
-
-// Entity contains the entity type
-enum Entity {
-  // Invalid Device Entity
-  ENTITY_UNSPECIFIED = 0;
-  // Base OS entity
-  ENTITY_BASE_OS = 1;
-  // System Adapter Entity
-  ENTITY_SYSTEM_ADAPTER = 2;
-  // Vault Entity
-  ENTITY_VAULT = 3;
-  // Attestation Entity
-  ENTITY_ATTESTATION = 4;
-  // App Instance Entity
-  ENTITY_APP_INSTANCE = 5;
-  // Port Entity
-  ENTITY_PORT = 6;
-  // Network Entity
-  ENTITY_NETWORK = 7;
-  // Network Instance Entity
-  ENTITY_NETWORK_INSTANCE = 8;
-  // ContentTree Entity
-  ENTITY_CONTENT_TREE = 9;
-  // Blob Entity
-  ENTITY_CONTENT_BLOB = 10;
-  // VOLUME Entity
-  ENTITY_VOLUME = 11;
-}
-
-// Severity tells the severity type
-enum Severity {
-  SEVERITY_UNSPECIFIED = 0; // severity unspecified
-  SEVERITY_NOTICE = 1;      // severity notice
-  SEVERITY_WARNING = 2;     // severity warning
-  SEVERITY_ERROR = 3;       // severity error
 }
 
 enum HwSecurityModuleStatus {
@@ -524,27 +497,6 @@ enum StorageTypeInfo {
   STORAGE_TYPE_INFO_ZFS = 2;
 }
 
-message SmartAttr {
-  uint32 id = 1;
-  uint64 value = 2;   // the current value of the parameter
-  uint64 worst = 3;   // worst value that Value has ever reached
-  uint64 thresh = 4;  // the value that the Value of the same attribute must reach for the attribute's state to be considered critical.
-  string when_failed = 5; // critical state if no empty
-  uint64 raw_value = 6; // Contains miscellaneous meter readings (where applicable)
-  string type = 7; // Informs the condition of the device e.g., pre-fail, old_age, etc.
-  string attribute_name = 8; // the attribute name
-}
-
-message StorageDiskInfo {
-  reserved 3; // deprecated
-  string disk_name = 1;
-  string wwn = 4;
-  string serial_number = 5;
-  string model = 6; // Intel 123456F
-  string collector_errors = 7; // Reports errors when collecting information. Default and normal value = ""
-  repeated SmartAttr smart_attr = 8; // smartctl output
-}
-
 // For nested structures like pool of stripes of mirrors we should define this structure
 message StorageChildren {
   StorageRaidType current_raid = 1;
@@ -568,11 +520,6 @@ message StorageInfo {
   string collector_errors = 10; // Reports errors when collecting information. Default and normal value = ""
   repeated StorageChildren children = 11; // If we have nested objects we should define them here
   string pool_status_msg = 12;  // pool status msg
-}
-
-// Information about the system that is sent once when the system boots
-message ZInfoHardware {
-  repeated StorageDiskInfo disks = 1; // S.M.A.R.T. info for disks
 }
 
 // Base device info, as discovered by Xen (or OS on bare metal)
@@ -688,6 +635,10 @@ message ZInfoDevice {
   string enterprise_id = 56;
   string project_name = 57;
   string project_id = 58;
+
+  // Device-reported information about certificates currently enrolled
+  // on the device, typically via network enrollment protocols such as SCEP.
+  repeated CertInfo enrolled_certs = 60;
 }
 
 // OptionalCapabilities indicates any additional capabilities device wants
@@ -696,6 +647,7 @@ message ZInfoDevice {
 message OptionalCapabilities {
   // Virtualization type Kubevirt
   bool hv_type_kubevirt = 1;
+  bool hw_inventory_support = 2;
 }
 
 // Capabilities indicates features in the EdgeDevConfig where there is
@@ -725,6 +677,7 @@ enum APICapability {
   API_CAPABILITY_DISABLE_VTPM = 18; // Support for disabling
   API_CAPABILITY_LOC_REBOOT_COLLECT_INFO = 19; // Support for rebooting and collect-info from LOC
   API_CAPABILITY_SMART_REPORT = 20; // Support for S.M.A.R.T. info on physical storage devices
+  API_CAPABILITY_REPORT_TPM_EVENTLOG = 21; // Support for reporting TPM Event Log "as is" without parsing and selectively reporting events
   // Add new values as new EdgeDevConfig API features are implemented
 }
 
@@ -757,6 +710,7 @@ enum MaintenanceModeReason {
   MAINTENANCE_MODE_REASON_LOW_DISK_SPACE = 3;
   MAINTENANCE_MODE_REASON_TPM_ENCRYPTION_FAILURE = 4;
   MAINTENANCE_MODE_REASON_TPM_QUOTE_FAILURE = 5;
+  MAINTENANCE_MODE_REASON_EDGE_NODE_CERTS_REFUSED = 6;
 }
 
 // Information about attestation process
@@ -839,6 +793,9 @@ message DevicePort {
 
   // Identifies the source of this network port configuration.
   org.lfedge.eve.common.PortConfigSource config_source = 40;
+
+  // Device-reported 802.1X (PNAC) runtime status for this port.
+  PNACStatus pnac_status = 50;
 }
 
 message ProxyStatus {
@@ -1419,4 +1376,22 @@ message ZInfoKubeCluster {
 
   // Virtual Machines running on the cluster
   repeated KubeVMIInfo eve_vm_apps = 6;
+}
+
+// Information about the system that is sent once when the system boots
+message ZInfoHardware {
+  // NOTE: deprecated - SMART info has been moved to ZHardwareHealth.
+  // Kept here for backward compatibility with older EVE/controller versions.
+  repeated StorageDiskInfo disks = 1 [deprecated = true]; // S.M.A.R.T. info for disks
+
+  // as in /etc/eve-release
+  string eve_release = 2;
+
+  HardwareInventory inventory = 3;
+
+  string kernel_flavor       = 4;  // e.g. "pc", "rt", "virt"
+  string kernel_version      = 5;  // e.g. "6.6.45-eve"
+  string eve_platform        = 6;  // board/platform name
+  string partition           = 7;  // e.g. "IMGA", "IMGB"
+  string kernel_cmdline      = 8;  // current kernel command line
 }
