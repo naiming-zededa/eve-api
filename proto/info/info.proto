@@ -462,6 +462,30 @@ enum ZDeviceState {
     ZDEVICE_STATE_POWERING_OFF = 7;
     // device prepared power off - all app instances are shut down
     ZDEVICE_STATE_PREPARED_POWEROFF = 8;
+    // Device is converting its on-disk layout, e.g. repartitioning the boot
+    // disk during an EVE-kvm <-> EVE-k update. Reported separately from
+    // BASEOS_UPDATING because part of the work runs in early boot, before the
+    // base-OS A/B install, and may include resizing the persist filesystem.
+    ZDEVICE_STATE_CONVERTING = 9;
+}
+
+// Sub-state of ZDeviceState, reported in ZInfoDevice.sub_state. Currently it
+// enumerates the phases of the EVE-kvm <-> EVE-k boot-disk conversion reported
+// alongside ZDEVICE_STATE_CONVERTING. Because most of that work runs in early
+// boot with no controller connectivity, EVE reports the furthest-reached
+// sub-state once it can talk to the controller again. Only the phases EVE can
+// actually report are enumerated: the shrink/create/rename steps run in the
+// offline early-boot resizer with no controller link and so are never observed.
+// Sub-states for other device states can be added here later.
+enum ZDeviceSubState {
+    ZDEVICE_SUBSTATE_UNSPECIFIED = 0;
+    // Rebooting into the early-boot resizer to repartition the boot disk
+    // (and, on the shrink path, to free space by shrinking persist offline).
+    ZDEVICE_SUBSTATE_CONVERT_REBOOTING_TO_RESIZE = 1;
+    // Installing the EVE-k (or EVE-kvm) base image into the resized partitions.
+    ZDEVICE_SUBSTATE_CONVERT_INSTALLING = 2;
+    // Rebooting into the converted EVE flavor.
+    ZDEVICE_SUBSTATE_CONVERT_REBOOTING_TO_TARGET = 3;
 }
 
 enum StorageStatus {
@@ -606,6 +630,12 @@ message ZInfoDevice {
   // Device State
   ZDeviceState state = 44;
 
+  // Sub-state of the device state (UNSPECIFIED unless a state defines
+  // sub-states; e.g. progress through the on-disk conversion while state ==
+  // ZDEVICE_STATE_CONVERTING). Declared here next to state for readability;
+  // its tag (61) is out of sequence — see the note at the end of the message.
+  ZDeviceSubState sub_state = 61;
+
   // Is there a local_profile from a local_profile_server?
   // The global_profile from the controller is not echoed in this field.
   string local_profile = 45;
@@ -620,7 +650,7 @@ message ZInfoDevice {
   // state of attestation process of eve
   AttestationInfo attestation_info = 50;
 
-  // Capability indicating which new EdgeDevConfig fields which are supported
+  // Level of API support; see APICapability
   APICapability api_capability = 51;
 
   // Reports the remote access status
@@ -640,31 +670,41 @@ message ZInfoDevice {
   // Device-reported information about certificates currently enrolled
   // on the device, typically via network enrollment protocols such as SCEP.
   repeated CertInfo enrolled_certs = 60;
+
+  // NOTE: tag 61 is used by sub_state (ZDeviceSubState), declared above next to
+  // state for readability. Next free tag: 62.
 }
 
 // OptionalCapabilities indicates any additional capabilities device wants
 // to publish to controller. For example Kubevirt hypervisor is not supported by
-// all eve flavors.
+// all eve flavors. Unlike APICapability these are independent booleans, each
+// tested separately; they vary by build flavor rather than by version.
 message OptionalCapabilities {
   // Virtualization type Kubevirt
   bool hv_type_kubevirt = 1;
+  // Device can report HardwareInventory in ZInfoHardware. When false, an empty
+  // inventory means the device cannot produce one, not that it found no hardware.
   bool hw_inventory_support = 2;
   // Device supports etcd snapshots (e.g. eve-k flavor)
   bool etcd_snapshot = 3;
 }
 
-// Capabilities indicates features in the EdgeDevConfig where there is
-// no easy way to otherwise determine whether or not they are parsed and
-// supported by EVE-OS
-// A larger number indicates all lower numbers are also supported thus
-// this works similar to a version field for the EdgeDevConfig support.
+// APICapability indicates API support a controller cannot otherwise detect:
+// both EdgeDevConfig fields EVE-OS parses, and messages EVE-OS sends - without
+// which a controller would wait indefinitely for e.g. the S.M.A.R.T.
+// information in ZHardwareHealth.
+// A larger number implies all lower numbers, so this works like a version
+// field and a controller must compare with >= rather than test for equality.
+// API_CAPABILITY_UNSPECIFIED also covers EVE-OS versions predating the field.
+// Contrast OptionalCapabilities: independent booleans, varying by build flavor.
+// CAPABILITIES.md lists what each value below covers.
 enum APICapability {
   API_CAPABILITY_UNSPECIFIED = 0;
   API_CAPABILITY_RETRY_UPDATE = 1; // BaseOs.retry_update counter supported
   API_CAPABILITY_SHUTDOWN = 2; // shutdown DevOpsCmd support
   API_CAPABILITY_START_DELAY_IN_SECONDS = 3; // start_delay_in_seconds supported
   API_CAPABILITY_EDGEVIEW = 4; // edgeview and edgeview.token supported
-  API_CAPABILITY_VOLUME_SNAPSHOTS = 5; // Volume snapshots supported
+  API_CAPABILITY_VOLUME_SNAPSHOTS = 5; // Volume snapshots on app instance update supported (SNAPSHOT_TYPE_APP_UPDATE)
   API_CAPABILITY_NETWORK_INSTANCE_ROUTING = 6; // routing config in NetworkInstanceConfig supported
   API_CAPABILITY_BOOT_MODE = 7; // Support different boot modes for Edge Applications (VMs)
   API_CAPABILITY_MTU = 8; // Allows to set MTU for network adapters and network instances
@@ -672,16 +712,19 @@ enum APICapability {
   API_CAPABILITY_ENFORCED_NET_INTERFACE_ORDER = 10; // EVE is able to enforce the user-defined order of application network interfaces
   API_CAPABILITY_NTPS_FQDN = 11; // Allow to set NTP server via FQDN instead of only IP and allow setting several NTP servers
   API_CAPABILITY_WIN_LIC_PASSTHROUGH = 12; // Support for passing through OEM Windows license from host's the ACPI tables to the VM
-  API_CAPABILITY_VOLUME_SNAPSHOTS_IMMEDIATE = 13; // Volume snapshots supported
+  API_CAPABILITY_VOLUME_SNAPSHOTS_IMMEDIATE = 13; // Volume snapshots on demand supported (SNAPSHOT_TYPE_IMMEDIATE); restarts the app to take one
   API_CAPABILITY_ENCRYPTED_PATCH_ENVELOPE = 14; // Support for Patch Envelope Encryption
   API_CAPABILITY_SINGLE_STACK_IP_NETWORK = 15; // Support for V4Only and V6Only NetworkType
   API_CAPABILITY_CELLULAR_ATTACH_CONFIG = 16; // Support cellular attach configuration
   API_CAPABILITY_EDGEVIEW_AUTHENTICATION = 17; // EdgeView authentication, see https://github.com/lf-edge/eve/blob/master/docs/EDGEVIEW-CONTAINER-API.md
-  API_CAPABILITY_DISABLE_VTPM = 18; // Support for disabling
+  API_CAPABILITY_DISABLE_VTPM = 18; // VmConfig.disable_vtpm supported
   API_CAPABILITY_LOC_REBOOT_COLLECT_INFO = 19; // Support for rebooting and collect-info from LOC
   API_CAPABILITY_SMART_REPORT = 20; // Support for S.M.A.R.T. info on physical storage devices
   API_CAPABILITY_REPORT_TPM_EVENTLOG = 21; // Support for reporting TPM Event Log "as is" without parsing and selectively reporting events
-  // Add new values as new EdgeDevConfig API features are implemented
+  API_CAPABILITY_APP_INSTANCE_NET_INTERFACE_CHANGE = 22; // Support for adding and removing network interfaces without purge, but restart or the edge app
+  API_CAPABILITY_DEFERRED_QUEUE_METRICS = 23; // Reports deviceMetric.deferred_queue and the per-URL retriable, rejected and delivered counts
+  // Append new values as new API features are implemented; never insert or
+  // renumber, since a value asserts that all lower values are also supported.
 }
 
 // Different reasons for a boot/reboot
@@ -702,6 +745,11 @@ enum BootReason {
   BOOT_REASON_UNKNOWN = 12;
   BOOT_REASON_VAULT_FAILED = 13;
   BOOT_REASON_POWEROFF_CMD = 14; // From Local Profile Server poweroff
+  BOOT_REASON_KUBE_TRANSITION = 15; // Transition to/from kubernetes single/cluster modes
+  // Hardware watchdog reset the device (WDIOF_CARDRESET). Only set on
+  // platforms whose watchdog driver reports this flag; many do not (e.g.
+  // Intel iTCO always reports a zero boot status).
+  BOOT_REASON_HW_WATCHDOG = 16;
   BOOT_REASON_PARSE_FAIL = 255;
 }
 
@@ -1285,7 +1333,8 @@ message ZInfoMsg {
   google.protobuf.Timestamp atTimeStamp = 6;
 }
 
-// Information about hardware capabilities of node
+// Information about hardware capabilities of node. Distinct from APICapability
+// (API support level) and OptionalCapabilities (per-flavor software support).
 message Capabilities {
   // VMX/SVM for amd64 or Arm virtualization extensions for arm64
   bool HWAssistedVirtualization = 2;
@@ -1402,6 +1451,12 @@ message ZInfoKubeCluster {
 
   // Virtual Machines running on the cluster
   repeated KubeVMIInfo eve_vm_apps = 6;
+
+  // Witness (2-node HA 3rd etcd vote) status. Set only when a witness is
+  // configured for this cluster; absent otherwise. Like the rest of this
+  // message it is sent by the elected cluster-info reporter, which is not
+  // necessarily the device hosting the witness.
+  KubeWitnessInfo witness = 7;
 }
 
 // Information about the system that is sent once when the system boots
